@@ -1,9 +1,12 @@
-﻿#nullable enable
+﻿// ===============================
+// RetryThrottleSystem.cs
+// ===============================
+#nullable enable
 using Game;
 using Game.Agents;
 using Game.Pathfind;
 using Game.Simulation;
-using Unity.Collections;
+using Unity.Burst;
 using Unity.Entities;
 using Unity.Mathematics;
 
@@ -13,19 +16,15 @@ namespace RealisticJobSearch.Systems
     {
         EntityQuery _paramsQ;
         EntityQuery _seekersQ;
+        EndFrameBarrier _endBarrier;
 
         protected override void OnCreate()
         {
             base.OnCreate();
+            _paramsQ = GetEntityQuery(ComponentType.ReadOnly<SpatialSamplerParams>());
+            _seekersQ = GetEntityQuery(ComponentType.ReadOnly<RefusedLongCommute>(), ComponentType.ReadOnly<JobSeeker>());
+            _endBarrier = World.GetOrCreateSystemManaged<EndFrameBarrier>();
 
-            // Cache queries
-            _paramsQ = EntityManager.CreateEntityQuery(ComponentType.ReadOnly<SpatialSamplerParams>());
-            _seekersQ = EntityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<JobSeeker>(),
-                ComponentType.ReadWrite<RefusedLongCommute>(),
-                ComponentType.Exclude<PathInformation>());
-
-            // Ensure params singleton exists once (safe if already present)
             if (_paramsQ.IsEmptyIgnoreFilter)
             {
                 var e = EntityManager.CreateEntity(typeof(SpatialSamplerParams));
@@ -36,6 +35,8 @@ namespace RealisticJobSearch.Systems
                     AlphaJobs = Mod.m_Setting.alpha_jobs,
                     BetaMinute = Mod.m_Setting.beta_minute,
                     TauMinutes = 5f,
+                    MaxCandidates = 12,
+                    Wildcards = 1,
                     MaxDailyRetries = 1,
                     RetryCooldownHours = 2f
                 });
@@ -44,34 +45,42 @@ namespace RealisticJobSearch.Systems
 
         protected override void OnUpdate()
         {
-            // Nothing to do if no seekers are currently in "refused" state and idle
             if (_seekersQ.IsEmptyIgnoreFilter) return;
 
             var sim = World.GetExistingSystemManaged<SimulationSystem>();
             uint frame = sim.frameIndex;
 
             var s = EntityManager.GetComponentData<SpatialSamplerParams>(_paramsQ.GetSingletonEntity());
-
-            const uint framesPerHour = 1024; // adjust if you have a better constant
+            const uint framesPerHour = 1024; // match vanilla sim scale
             uint cooldown = (uint)math.max(1, s.RetryCooldownHours * framesPerHour);
 
-            var ents = _seekersQ.ToEntityArray(Allocator.Temp);
-            var data = _seekersQ.ToComponentDataArray<RefusedLongCommute>(Allocator.Temp);
+            var ecb = _endBarrier.CreateCommandBuffer().AsParallelWriter();
 
-            for (int i = 0; i < ents.Length; i++)
+            var job = new ThrottleJob
             {
-                var rc = data[i];
+                Frame = frame,
+                Cooldown = cooldown,
+                MaxDailyRetries = s.MaxDailyRetries,
+                Ecb = ecb
+            };
 
-                // Hard cap: stop re-trying beyond your daily limit; vanilla can reset count on a schedule if needed.
-                if (rc.Count >= s.MaxDailyRetries) continue;
+            Dependency = job.ScheduleParallel(_seekersQ, Dependency);
+        }
 
-                // Cooldown passed → allow another attempt by removing the marker
-                if (frame - rc.LastRefusalFrame >= cooldown)
-                    EntityManager.RemoveComponent<RefusedLongCommute>(ents[i]);
+        [BurstCompile]
+        private partial struct ThrottleJob : IJobEntity
+        {
+            public uint Frame;
+            public uint Cooldown;
+            public int MaxDailyRetries;
+            public EntityCommandBuffer.ParallelWriter Ecb;
+
+            public void Execute([ChunkIndexInQuery] int ciq, Entity e, in RefusedLongCommute rc)
+            {
+                if (rc.Count >= MaxDailyRetries) return;
+                if (Frame - rc.LastRefusalFrame < Cooldown) return;
+                Ecb.RemoveComponent<RefusedLongCommute>(ciq, e);
             }
-
-            ents.Dispose();
-            data.Dispose();
         }
     }
 }

@@ -35,19 +35,22 @@ namespace RealisticJobSearch
                                      Game.Simulation.FindJobSystem > (SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateBefore<RetryThrottleSystem,
                                      Game.Simulation.FindJobSystem>(SystemUpdatePhase.GameSimulation);
-            updateSystem.UpdateBefore<MetricsSystem,
-                                     Game.Simulation.FindJobSystem>(SystemUpdatePhase.GameSimulation);
-            updateSystem.UpdateAfter<MetricsSystem,
-                                     GravityAcceptanceGateSystem>(SystemUpdatePhase.GameSimulation);
-
+            if(m_Setting.debug)
+            {
+                updateSystem.UpdateBefore<MetricsSystem,
+                                                     Game.Simulation.FindJobSystem>(SystemUpdatePhase.GameSimulation);
+                updateSystem.UpdateAfter<MetricsSystem,
+                                         GravityAcceptanceGateSystem>(SystemUpdatePhase.GameSimulation);
+            }
+            
 
             AssetDatabase.global.LoadSettings(nameof(RealisticJobSearch), m_Setting, new Setting(this));
 
             var harmony = new Harmony(harmonyID);
             // Harmony.DEBUG = true;
             harmony.PatchAll(typeof(Mod).Assembly);
-
-
+            
+            
             var patchedMethods = harmony.GetPatchedMethods().ToArray();
             log.Info($"Plugin {harmonyID} made patches! Patched methods: " + patchedMethods.Length);
             foreach (var patchedMethod in patchedMethods)

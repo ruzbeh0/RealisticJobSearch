@@ -1,36 +1,40 @@
 ﻿#nullable enable
 using Game;
 using Game.Agents;
+using Game.Common;
 using Game.Companies;
 using Game.Pathfind;
 using Game.Simulation;
-using System.Security.Cryptography;
+using Unity.Burst;
+using Unity.Burst.Intrinsics;
 using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 
 namespace RealisticJobSearch.Systems
 {
+    /// <summary>
+    /// Gates finished job-seeker path results using a gravity-style acceptance model.
+    /// IMPORTANT: Uses the same PathInformation fields as the base game (m_Destination, m_Duration, m_State).
+    /// </summary>
     public sealed partial class GravityAcceptanceGateSystem : GameSystemBase
     {
-        EntityQuery _paramsQ;
-        EntityQuery _seekersQ;
+        private EndFrameBarrier m_EndBarrier;
+        private EntityQuery m_ParamsQ;
+        private EntityQuery m_ResultsQ;
 
         protected override void OnCreate()
         {
             base.OnCreate();
 
-            // Cache queries
-            _paramsQ = EntityManager.CreateEntityQuery(ComponentType.ReadOnly<GravityAcceptParams>());
-            _seekersQ = EntityManager.CreateEntityQuery(
-                ComponentType.ReadOnly<JobSeeker>(),
-                ComponentType.ReadOnly<PathInformation>());
+            m_EndBarrier = World.GetOrCreateSystemManaged<EndFrameBarrier>();
 
-            // Ensure params singleton exists (only once)
-            if (_paramsQ.IsEmptyIgnoreFilter)
+            // Singleton params (created by Mod bootstrap or defaulted here)
+            m_ParamsQ = GetEntityQuery(ComponentType.ReadOnly<GravityAcceptParams>());
+            if (m_ParamsQ.IsEmptyIgnoreFilter)
             {
-                var e = EntityManager.CreateEntity(typeof(GravityAcceptParams));
-                EntityManager.SetComponentData(e, new GravityAcceptParams
+                EntityManager.CreateEntity(typeof(GravityAcceptParams));
+                EntityManager.SetComponentData(m_ParamsQ.GetSingletonEntity(), new GravityAcceptParams
                 {
                     AlphaJobs = Mod.m_Setting.alpha_jobs,
                     BetaMinute = Mod.m_Setting.beta_minute,
@@ -38,81 +42,103 @@ namespace RealisticJobSearch.Systems
                     MaxAccept = Mod.m_Setting.max_accept
                 });
             }
+
+            // Finished path results for job seekers (same shape as vanilla StartWorkingJob’s query).
+            m_ResultsQ = GetEntityQuery(
+                ComponentType.ReadOnly<JobSeeker>(),
+                ComponentType.ReadOnly<Owner>(),
+                ComponentType.ReadOnly<PathInformation>(),
+                ComponentType.Exclude<Deleted>());
+
+            RequireForUpdate(m_ResultsQ);
         }
 
         protected override void OnUpdate()
         {
-            // Nothing to do if there are no candidates this frame
-            if (_seekersQ.IsEmptyIgnoreFilter) return;
+            var p = EntityManager.GetComponentData<GravityAcceptParams>(m_ParamsQ.GetSingletonEntity());
+            uint frame = World.GetExistingSystemManaged<SimulationSystem>().frameIndex;
 
-            var sim = World.GetExistingSystemManaged<SimulationSystem>();
-            uint frame = sim.frameIndex;
-
-            var p = EntityManager.GetComponentData<GravityAcceptParams>(_paramsQ.GetSingletonEntity());
-
-            var ents = _seekersQ.ToEntityArray(Allocator.Temp);
-            var infos = _seekersQ.ToComponentDataArray<PathInformation>(Allocator.Temp);
-
-            var wpRO = GetComponentLookup<WorkProvider>(true);
-            var fwRO = GetComponentLookup<FreeWorkplaces>(true);
-
-            var ecb = new EntityCommandBuffer(Allocator.Temp);
-            uint seed = frame ^ 0x9E3779B9u;
-
-            for (int i = 0; i < ents.Length; i++)
+            var job = new GateJob
             {
-                var info = infos[i];
+                m_EntityType = GetEntityTypeHandle(),
+                m_PathInfoType = GetComponentTypeHandle<PathInformation>(true),
+                m_FreeWorkplaces = GetComponentLookup<FreeWorkplaces>(true),
+                m_Refusals = GetComponentLookup<RefusedLongCommute>(false),
+                m_Params = p,
+                m_SimulationFrame = frame,
+                m_ECB = m_EndBarrier.CreateCommandBuffer().AsParallelWriter()
+            };
 
-                // "Complete" in your build = not Pending and not Failed
-                if ((info.m_State & PathFlags.Pending) != 0) continue;
-                if ((info.m_State & PathFlags.Failed) != 0) continue;
+            Dependency = job.ScheduleParallel(m_ResultsQ, Dependency);
+            m_EndBarrier.AddJobHandleForProducer(Dependency);
+        }
 
-                float minutes = math.max(0.01f, info.m_Duration);
+        [BurstCompile]
+        private struct GateJob : IJobChunk
+        {
+            [ReadOnly] public EntityTypeHandle m_EntityType;
+            [ReadOnly] public ComponentTypeHandle<PathInformation> m_PathInfoType;
 
-                // Safety rails
-                if (minutes <= 50f) { /* accept */ continue; }
-                if (EntityManager.HasComponent<RefusedLongCommute>(ents[i]) &&
-                    EntityManager.GetComponentData<RefusedLongCommute>(ents[i]).Count >= 3)
+            // Lookups (read-only for data checks)
+            [ReadOnly] public ComponentLookup<FreeWorkplaces> m_FreeWorkplaces;
+            // Lookup for presence check of the marker we update; writes go via ECB.
+            public ComponentLookup<RefusedLongCommute> m_Refusals;
+
+            public GravityAcceptParams m_Params;
+            public uint m_SimulationFrame;
+
+            public EntityCommandBuffer.ParallelWriter m_ECB;
+
+            public void Execute(in ArchetypeChunk chunk, int unfilteredChunkIndex, bool useEnabledMask, in v128 chunkEnabledMask)
+            {
+                var ents = chunk.GetNativeArray(m_EntityType);
+                var infos = chunk.GetNativeArray(ref m_PathInfoType);
+
+                for (int i = 0; i < ents.Length; i++)
                 {
-                    /* accept */
-                    continue;
-                }
+                    var info = infos[i];
 
-                // mass from destination building (free slots or max workers)
-                float mass = 1f;
-                Entity dest = info.m_Destination;
-                if (dest != Entity.Null)
-                {
-                    float free = fwRO.HasComponent(dest) ? fwRO[dest].Count : 0f;
-                    float total = wpRO.HasComponent(dest) ? (float)wpRO[dest].m_MaxWorkers : 0f;
-                    mass = math.max(1f, Mod.m_Setting.weight_free_jobs * free + Mod.m_Setting.weight_total_jobs * total);
-                }
+                    // still pending? leave it for later
+                    if ((info.m_State & PathFlags.Pending) != 0)
+                        continue;
 
-                float U = p.AlphaJobs * math.log(1f + mass) - p.BetaMinute * minutes;
-                float prob = math.clamp(1f / (1f + math.exp(-U)), p.MinAccept, p.MaxAccept);
+                    Entity seeker = ents[i];
+                    Entity dest = info.m_Destination;
 
-                // RNG
-                seed = unchecked(seed * 1664525u + 1013904223u);
-                float r = (seed & 0x00FFFFFFu) / 16777216f;
+                    // crude "mass" term: available workplaces at the destination (>=1)
+                    int jobs = 1;
+                    if (dest != Entity.Null && m_FreeWorkplaces.HasComponent(dest))
+                        jobs = math.max(1, m_FreeWorkplaces[dest].Count);
 
-                if (r > prob)
-                {
-                    ecb.RemoveComponent<PathInformation>(ents[i]);
-                    if (!EntityManager.HasComponent<RefusedLongCommute>(ents[i]))
-                        ecb.AddComponent(ents[i], new RefusedLongCommute { Count = 1, LastRefusalFrame = frame });
-                    else
+                    float minutes = math.max(0.01f, info.m_Duration / 60f);         // duration is in seconds
+                    float mass = math.pow(jobs, m_Params.AlphaJobs);
+                    float accept = mass * math.exp(-m_Params.BetaMinute * minutes);
+                    accept = math.clamp(accept, m_Params.MinAccept, m_Params.MaxAccept);
+
+                    // Reject below lower bound: strip PathInformation so vanilla won’t start working yet.
+                    if (accept <= m_Params.MinAccept + 1e-4f)
                     {
-                        var rc = EntityManager.GetComponentData<RefusedLongCommute>(ents[i]);
-                        rc.Count += 1; rc.LastRefusalFrame = frame;
-                        ecb.SetComponent(ents[i], rc);
+                        m_ECB.RemoveComponent<PathInformation>(unfilteredChunkIndex, seeker);
+
+                        if (m_Refusals.HasComponent(seeker))
+                        {
+                            var rc = m_Refusals[seeker];
+                            rc.Count += 1;
+                            rc.LastRefusalFrame = m_SimulationFrame;
+                            m_ECB.SetComponent(unfilteredChunkIndex, seeker, rc);
+                        }
+                        else
+                        {
+                            m_ECB.AddComponent(unfilteredChunkIndex, seeker, new RefusedLongCommute
+                            {
+                                Count = 1,
+                                LastRefusalFrame = m_SimulationFrame
+                            });
+                        }
                     }
+                    // else accepted — do nothing; FindJobSystem.StartWorkingJob will handle it
                 }
             }
-
-            ecb.Playback(EntityManager);
-            ecb.Dispose();
-            ents.Dispose();
-            infos.Dispose();
         }
     }
 }

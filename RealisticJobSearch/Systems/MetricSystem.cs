@@ -167,20 +167,23 @@ namespace RealisticJobSearch
         {
             try
             {
-                if (!File.Exists(_csvPath))
-                {
-                    Directory.CreateDirectory(Path.GetDirectoryName(_csvPath)!);
-                    using var sw = new StreamWriter(_csvPath, append: false);
-                    sw.WriteLine("timestamp,frame,count,avg_meters,avg_minutes,p50_km,p90_km,p95_km,p99_km,hist_0_1km,hist_1_2km,...,hist_30km_plus");
-                    _wroteHeader = true;
-                }
-                else _wroteHeader = true;
+                // Always (re)create the directory and truncate the file on each run
+                Directory.CreateDirectory(Path.GetDirectoryName(_csvPath)!);
+                using var sw = new StreamWriter(_csvPath, append: false); // overwrite / create
+                sw.WriteLine("timestamp,frame,count,avg_meters,avg_minutes,p50_km,p90_km,p95_km,p99_km,hist_0_1km,hist_1_2km,hist_2_3km,hist_3_4km,hist_4_5km,hist_5_6km,hist_6_7km,hist_7_8km,hist_8_9km,hist_9_10km,hist_10_11km,hist_11_12km,hist_12_13km,hist_13_14km,hist_14_15km,hist_15_16km,hist_16_17km,hist_17_18km,hist_18_19km,hist_19_20km,hist_20_21km,hist_21_22km,hist_22_23km,hist_23_24km,hist_24_25km,hist_25_26km,hist_26_27km,hist_27_28km,hist_28_29km,hist_29_30km,hist_30km_plus");
+                _wroteHeader = true;
+
+                // (Optional) reset write trackers since we’re starting a fresh file
+                _lastWriteFrame = 0;
+                _lastWriteCount = 0;
             }
             catch (Exception ex)
             {
                 Mod.log.Info("[RJS Metrics] Failed to create CSV: " + ex.Message);
+                _wroteHeader = false;
             }
         }
+
 
         void TryAppendRow(uint frame)
         {
