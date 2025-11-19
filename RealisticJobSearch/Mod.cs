@@ -28,6 +28,7 @@ namespace RealisticJobSearch
             m_Setting = new Setting(this);
             m_Setting.RegisterInOptionsUI();
             GameManager.instance.localizationManager.AddSource("en-US", new LocaleEN(m_Setting));
+            AssetDatabase.global.LoadSettings(nameof(RealisticJobSearch), m_Setting, new Setting(this));
 
             updateSystem.UpdateBefore<GravityPreFilterSystem,
                                      Game.Simulation.FindJobSystem>(SystemUpdatePhase.GameSimulation);
@@ -37,6 +38,7 @@ namespace RealisticJobSearch
                                      Game.Simulation.FindJobSystem>(SystemUpdatePhase.GameSimulation);
             if(m_Setting.debug)
             {
+                log.Info($"Debug CSV output enabled");
                 updateSystem.UpdateBefore<MetricsSystem,
                                                      Game.Simulation.FindJobSystem>(SystemUpdatePhase.GameSimulation);
                 updateSystem.UpdateAfter<MetricsSystem,

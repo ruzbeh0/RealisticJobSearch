@@ -13,8 +13,10 @@
 
 	<ItemGroup>
 		<Reference Include="Colossal.PSI.Common">
+			<Private>false</Private>
 		</Reference>
 		<Reference Include="Colossal.PSI.PdxSdk">
+			<Private>false</Private>
 		</Reference>
 		<Reference Include="Game">
 			<Private>false</Private>
