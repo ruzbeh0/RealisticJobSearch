@@ -2,14 +2,24 @@
 
 	<PropertyGroup>
 		<Configurations>Debug;Release</Configurations>
+		<TargetFramework>net48</TargetFramework>
 	
 		<!--The file where mod information which is required for publishing mod on PDX mods are stored-->
 		<PublishConfigurationPath>Properties\PublishConfiguration.xml</PublishConfigurationPath>
 	</PropertyGroup>
+
+	<PropertyGroup>
+		<CsiiToolPath Condition="'$(CsiiToolPath)' == ''">$([System.Environment]::GetEnvironmentVariable('CSII_TOOLPATH'))</CsiiToolPath>
+		<CsiiToolPath Condition="'$(CsiiToolPath)' == ''">$([System.Environment]::GetEnvironmentVariable('CSII_TOOLPATH', 'EnvironmentVariableTarget.User'))</CsiiToolPath>
+	</PropertyGroup>
 	
 	<!--Imports must be after PropertyGroup block-->
-	<Import Project="$([System.Environment]::GetEnvironmentVariable('CSII_TOOLPATH', 'EnvironmentVariableTarget.User'))\Mod.props" />
-	<Import Project="$([System.Environment]::GetEnvironmentVariable('CSII_TOOLPATH', 'EnvironmentVariableTarget.User'))\Mod.targets" />
+	<Import Project="$(CsiiToolPath)\Mod.props" Condition="Exists('$(CsiiToolPath)\Mod.props')" />
+	<Import Project="$(CsiiToolPath)\Mod.targets" Condition="Exists('$(CsiiToolPath)\Mod.targets')" />
+
+	<Target Name="FailMissingCsiiToolPath" BeforeTargets="BeforeBuild" Condition="!Exists('$(CsiiToolPath)\Mod.props') Or !Exists('$(CsiiToolPath)\Mod.targets')">
+		<Error Text="CSII_TOOLPATH is not set or does not point to the Cities: Skylines II modding toolchain cache." />
+	</Target>
 
 	<ItemGroup>
 		<Reference Include="Colossal.PSI.Common">

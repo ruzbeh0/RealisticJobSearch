@@ -34,7 +34,7 @@ This mod is tuned to work especially well with **Realistic Workplaces and Househ
 	<!--Link to the forum post where the mod can be discussed-->
 	<ForumLink Value="https://forum.paradoxplaza.com/forum/threads/realistic-jobsearch-mod.1865546/" />
 	<!--Version of the mod-->
-	<ModVersion Value="0.1.2" />
+	<ModVersion Value="0.2" />
 	<!--Recommended version of the base game to use the mod-->
 	<GameVersion Value="1.4.*" />
 	<!--Dependency for the mod, can be set multiple times-->
@@ -43,7 +43,7 @@ This mod is tuned to work especially well with **Realistic Workplaces and Househ
 	<RequiredDLC Value="" />
 	<!--Change log for new version. Single line or multi line. Supports minimal markdown subset-->
 	<ChangeLog>
-* Updated for game version 1.4.2
+* Refactored and recalibrated the mod.
 	</ChangeLog>
 	<!--<ChangeLog>
 	</ChangeLog>-->
