@@ -39,6 +39,8 @@ namespace RealisticJobSearch
         protected override void OnCreate()
         {
             base.OnCreate();
+            // Make sure file has a header
+            TryWriteHeader();
         }
 
         public override int GetUpdateInterval(SystemUpdatePhase phase)
@@ -49,20 +51,6 @@ namespace RealisticJobSearch
 
         protected override void OnUpdate()
         {
-            if (Mod.m_Setting == null || !Mod.m_Setting.debug)
-            {
-                return;
-            }
-
-            if (!_wroteHeader)
-            {
-                TryWriteHeader();
-                if (!_wroteHeader)
-                {
-                    return;
-                }
-            }
-
             var sim = World.GetExistingSystemManaged<SimulationSystem>();
             uint frame = sim.frameIndex;
 
@@ -90,33 +78,28 @@ namespace RealisticJobSearch
                 if ((info.m_State & Game.Pathfind.PathFlags.Pending) != 0) continue;
                 if ((info.m_State & Game.Pathfind.PathFlags.Failed) != 0) continue;
                 //Mod.log.Info($"[RJS Metrics]   Counting path for entity {e.Index}");
-                float meters = math.max(0f, info.m_Distance);
-                if (meters <= 0f)
+                // Resolve origin position
+                if (!TryGetWorldXZ(info.m_Origin, tf, bLookup, out float2 oPos))
                 {
-                    // Resolve origin position
-                    if (!TryGetWorldXZ(info.m_Origin, tf, bLookup, out float2 oPos))
+                    // fallback: seeker’s current building (home or wherever they are)
+                    if (curLookup.HasComponent(e))
                     {
-                        // fallback: seeker’s current building (home or wherever they are)
-                        if (curLookup.HasComponent(e))
-                        {
-                            var cb = curLookup[e].m_CurrentBuilding;
-                            if (!TryGetWorldXZ(cb, tf, bLookup, out oPos)) continue; // give up if still no pos
-                        }
-                        else continue;
+                        var cb = curLookup[e].m_CurrentBuilding;
+                        if (!TryGetWorldXZ(cb, tf, bLookup, out oPos)) continue; // give up if still no pos
                     }
-
-                    // Resolve destination position
-                    if (!TryGetWorldXZ(info.m_Destination, tf, bLookup, out float2 dPos))
-                    {
-                        // Dest should be a building; try anyway via Building -> Transform
-                        // If we get here, and still no pos, skip
-                        continue;
-                    }
-
-                    meters = math.distance(oPos, dPos);
+                    else continue;
                 }
 
-                float minutes = math.max(0.01f, info.m_Duration / 60f);
+                // Resolve destination position
+                if (!TryGetWorldXZ(info.m_Destination, tf, bLookup, out float2 dPos))
+                {
+                    // Dest should be a building; try anyway via Building -> Transform
+                    // If we get here, and still no pos, skip
+                    continue;
+                }
+
+                float meters = math.distance(oPos, dPos);
+                float minutes = math.max(0.01f, info.m_Duration);
 
                 _acceptedCount++;
                 _sumMeters += meters;
@@ -254,10 +237,7 @@ namespace RealisticJobSearch
         protected override void OnDestroy()
         {
             // Final flush
-            if (_wroteHeader)
-            {
-                TryAppendRow(World.GetExistingSystemManaged<SimulationSystem>().frameIndex);
-            }
+            TryAppendRow(World.GetExistingSystemManaged<SimulationSystem>().frameIndex);
             base.OnDestroy();
         }
     }

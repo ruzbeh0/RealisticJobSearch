@@ -28,29 +28,31 @@ namespace RealisticJobSearch
             m_Setting = new Setting(this);
             m_Setting.RegisterInOptionsUI();
             GameManager.instance.localizationManager.AddSource("en-US", new LocaleEN(m_Setting));
+            AssetDatabase.global.LoadSettings(nameof(RealisticJobSearch), m_Setting, new Setting(this));
 
             updateSystem.UpdateBefore<GravityPreFilterSystem,
                                      Game.Simulation.FindJobSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateBefore<GravityAcceptanceGateSystem,
-                                     Game.Simulation.FindJobSystem > (SystemUpdatePhase.GameSimulation);
+                                     Game.Simulation.FindJobSystem>(SystemUpdatePhase.GameSimulation);
             updateSystem.UpdateBefore<RetryThrottleSystem,
                                      Game.Simulation.FindJobSystem>(SystemUpdatePhase.GameSimulation);
-            if(m_Setting.debug)
+            if (m_Setting.debug)
             {
+                log.Info($"Debug CSV output enabled");
                 updateSystem.UpdateBefore<MetricsSystem,
                                                      Game.Simulation.FindJobSystem>(SystemUpdatePhase.GameSimulation);
                 updateSystem.UpdateAfter<MetricsSystem,
                                          GravityAcceptanceGateSystem>(SystemUpdatePhase.GameSimulation);
             }
-            
+
 
             AssetDatabase.global.LoadSettings(nameof(RealisticJobSearch), m_Setting, new Setting(this));
 
             var harmony = new Harmony(harmonyID);
             // Harmony.DEBUG = true;
             harmony.PatchAll(typeof(Mod).Assembly);
-            
-            
+
+
             var patchedMethods = harmony.GetPatchedMethods().ToArray();
             log.Info($"Plugin {harmonyID} made patches! Patched methods: " + patchedMethods.Length);
             foreach (var patchedMethod in patchedMethods)

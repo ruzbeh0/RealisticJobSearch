@@ -158,7 +158,6 @@ namespace RealisticJobSearch.Systems
                     m_Methods = PathMethod.Pedestrian | PathMethod.PublicTransportDay | PathMethod.PublicTransportNight,
                     m_PathfindFlags = PathfindFlags.Simplified | PathfindFlags.IgnorePath,
                     m_IgnoredRules = default,
-                    m_SecondaryIgnoredRules = default
                 };
 
                 var origin = new SetupQueueTarget

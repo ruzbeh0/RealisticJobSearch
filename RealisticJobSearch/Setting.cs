@@ -30,6 +30,7 @@ namespace RealisticJobSearch
             beta_minute = 0.9f;
             min_accept = 0.15f;
             max_accept = 0.98f;
+            debug = false;
         }
 
         [SettingsUISection(SettingsSection, SettingsGroup)]
